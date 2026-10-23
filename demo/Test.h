@@ -25,6 +25,11 @@
 //--------------------------------------------------------------------------------------------------
 
 
+#ifndef TEST_H
+#define TEST_H
+
+#include "Demo.h"
+
 struct Test : public Demo
 {
 	virtual void Init( )
@@ -54,3 +59,5 @@ struct Test : public Demo
 		scene.RemoveAllBodies( );
 	}
 };
+
+#endif

@@ -24,6 +24,11 @@
 */
 //--------------------------------------------------------------------------------------------------
 
+#ifndef DROPBOXES_H
+#define DROPBOXES_H
+
+#include "Demo.h"
+
 struct DropBoxes : public Demo
 {
 	virtual void Init( )
@@ -92,3 +97,5 @@ struct DropBoxes : public Demo
 
 	float acc;
 };
+
+#endif

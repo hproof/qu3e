@@ -25,6 +25,11 @@
 //--------------------------------------------------------------------------------------------------
 
 
+#ifndef BOXSTACK_H
+#define BOXSTACK_H
+
+#include "Demo.h"
+
 struct BoxStack : public Demo
 {
 	virtual void Init( )
@@ -78,3 +83,5 @@ struct BoxStack : public Demo
 		scene.RemoveAllBodies( );
 	}
 };
+
+#endif

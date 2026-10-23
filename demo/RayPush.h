@@ -24,6 +24,11 @@
 */
 //--------------------------------------------------------------------------------------------------
 
+#ifndef RAYPUSH_H
+#define RAYPUSH_H
+
+#include "Demo.h"
+
 class Raycast : public q3QueryCallback
 {
 public:
@@ -138,3 +143,5 @@ struct RayPush : public Demo
 
 	float acc;
 };
+
+#endif
