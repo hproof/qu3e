@@ -57,6 +57,8 @@ public:
 	virtual void EndContact( const q3ContactConstraint *contact ) = 0;
 };
 
+
+// 用于 point/AABB/Raycast 检测的回调
 // This class represents general queries for points, AABBs and Raycasting.
 // ReportShape is called the moment a valid shape is found. The return
 // value of ReportShape controls whether to continue or stop the query.

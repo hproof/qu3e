@@ -29,16 +29,20 @@
 
 #include "Demo.h"
 
+
+// 命中测试 回调检测
 class Raycast : public q3QueryCallback
 {
 public:
-	q3RaycastData data;
-	r32 tfinal;
-	q3Vec3 nfinal;
+	q3RaycastData data;		// 同时作为 输入 + 输出
+	r32 tfinal;						// 最近的 time， 初始为 max
+	q3Vec3 nfinal;				// 最近的 normal
 	q3Body *impactBody;
 	
+	// 记录 shape
 	bool ReportShape( q3Box *shape )
 	{
+		// 如果 本次碰撞 更近, 则保存
 		if ( data.toi < tfinal )
 		{
 			tfinal = data.toi;
@@ -46,10 +50,11 @@ public:
 			impactBody = shape->body;
 		}
 
-		data.toi = tfinal;
+		data.toi = tfinal;			// 这个貌似没什么作用?
 		return true;
 	}
 
+	// 初始化
 	void Init( const q3Vec3& spot, const q3Vec3& dir )
 	{
 		data.start = spot;

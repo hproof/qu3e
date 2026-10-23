@@ -30,11 +30,14 @@
 //--------------------------------------------------------------------------------------------------
 // q3Box
 //--------------------------------------------------------------------------------------------------
+
+// 检测 box 和 point 相交
 bool q3Box::TestPoint( const q3Transform& tx, const q3Vec3& p ) const
 {
-	q3Transform world = q3Mul( tx, local );
-	q3Vec3 p0 = q3MulT( world, p );
+	q3Transform world = q3Mul( tx, local );		// 计算 box 的世界变化
+	q3Vec3 p0 = q3MulT( world, p );						// 把 p 变化到 box 的 局部坐标
 
+	// 依次比较 x/y/z 三维
 	for ( int i = 0; i < 3; ++i )
 	{
 		r32 d = p0[ i ];
@@ -50,22 +53,26 @@ bool q3Box::TestPoint( const q3Transform& tx, const q3Vec3& p ) const
 }
 
 //--------------------------------------------------------------------------------------------------
+
+// 检测 ray 和 box 相交
 bool q3Box::Raycast( const q3Transform& tx, q3RaycastData* raycast ) const
 {
-	q3Transform world = q3Mul( tx, local );
-	q3Vec3 d = q3MulT( world.rotation, raycast->dir );
-	q3Vec3 p = q3MulT( world, raycast->start );
-	const r32 epsilon = r32( 1.0e-8 );
+	q3Transform world = q3Mul( tx, local );			// 计算 box 的 世界变化
+	q3Vec3 d = q3MulT( world.rotation, raycast->dir );		// 局部 方向
+	q3Vec3 p = q3MulT( world, raycast->start );						// 局部 位置
+	const r32 epsilon = r32( 1.0e-8 );		// 误差值
 	r32 tmin = 0;
-	r32 tmax = raycast->t;
+	r32 tmax = raycast->t;						// 射线 time 的 [min, max]
 
 	// t = (e[ i ] - p.[ i ]) / d[ i ]
 	r32 t0;
 	r32 t1;
 	q3Vec3 n0;
 
+	// 在 3个轴线上， 分别检查 slab(2个平面构成的区域) 和 ray 的 (t0,t1)
 	for ( int i = 0; i < 3; ++i )
 	{
+		// 如果 ray 和 该轴平行， 则检查 半长
 		// Check for ray parallel to and outside of AABB
 		if ( q3Abs( d[ i ] ) < epsilon )
 		{
@@ -84,16 +91,16 @@ bool q3Box::Raycast( const q3Transform& tx, q3RaycastData* raycast ) const
 			q3Vec3 n( 0, 0, 0 );
 			n[ i ] = -s;
 
-			t0 = -(ei + p[ i ]) * d0;
-			t1 = (ei - p[ i ]) * d0;
+			t0 = -(ei + p[ i ]) * d0;			// 进入 slab 的 time 
+			t1 = (ei - p[ i ]) * d0;			// 离开 slab 的 time
 
-			if ( t0 > tmin )
+			if ( t0 > tmin )			// 进入 取最大值
 			{
 				n0 = n;
 				tmin = t0;
 			}
 
-			tmax = q3Min( tmax, t1 );
+			tmax = q3Min( tmax, t1 );		// 离开 取 最小值
 
 			if ( tmin > tmax )
 			{
@@ -111,8 +118,9 @@ bool q3Box::Raycast( const q3Transform& tx, q3RaycastData* raycast ) const
 //--------------------------------------------------------------------------------------------------
 void q3Box::ComputeAABB( const q3Transform& tx, q3AABB* aabb ) const
 {
-	q3Transform world = q3Mul( tx, local );
+	q3Transform world = q3Mul( tx, local );		// 计算 local to world
 
+	// 计算 local 
 	q3Vec3 v[ 8 ] = {
 		q3Vec3( -e.x, -e.y, -e.z ),
 		q3Vec3( -e.x, -e.y,  e.z ),
@@ -124,9 +132,11 @@ void q3Box::ComputeAABB( const q3Transform& tx, q3AABB* aabb ) const
 		q3Vec3(  e.x,  e.y,  e.z )
 	};
 
+	// 转换为 world
 	for ( i32 i = 0; i < 8; ++i )
 		v[ i ] = q3Mul( world, v[ i ] );
 
+	// 计算 min-max
 	q3Vec3 min( Q3_R32_MAX, Q3_R32_MAX, Q3_R32_MAX );
 	q3Vec3 max( -Q3_R32_MAX, -Q3_R32_MAX, -Q3_R32_MAX );
 
@@ -141,20 +151,28 @@ void q3Box::ComputeAABB( const q3Transform& tx, q3AABB* aabb ) const
 }
 
 //--------------------------------------------------------------------------------------------------
+
+// 计算 质量属性
 void q3Box::ComputeMass( q3MassData* md ) const
 {
+	// 质量 = 体积 * 密度
+	r32 mass = r32( 8.0 ) * e.x * e.y * e.z * density;		
+
+	// 绕质心的惯性张量, 长方体标准公式
 	// Calculate inertia tensor
 	r32 ex2 = r32( 4.0 ) * e.x * e.x;
 	r32 ey2 = r32( 4.0 ) * e.y * e.y;
 	r32 ez2 = r32( 4.0 ) * e.z * e.z;
-	r32 mass = r32( 8.0 ) * e.x * e.y * e.z * density;
-	r32 x = r32( 1.0 / 12.0 ) * mass * (ey2 + ez2);
+	r32 x = r32( 1.0 / 12.0 ) * mass * (ey2 + ez2);		// 绕 X 轴的 惯性由 YZ 决定
 	r32 y = r32( 1.0 / 12.0 ) * mass * (ex2 + ez2);
 	r32 z = r32( 1.0 / 12.0 ) * mass * (ex2 + ey2);
 	q3Mat3 I = q3Diagonal( x, y, z );
 
+	// 旋转到 刚体模型 空间,  I' = R * I * T(R)
 	// Transform tensor to local space
 	I = local.rotation * I * q3Transpose( local.rotation );
+
+	// 平移到 刚体模型 空间原点
 	q3Mat3 identity;
 	q3Identity( identity );
 	I += (identity * q3Dot( local.position, local.position ) - q3OuterProduct( local.position, local.position )) * mass;
@@ -181,10 +199,13 @@ const i32 kBoxIndices[ 36 ] = {
 };
 
 //--------------------------------------------------------------------------------------------------
+
+// 绘制
 void q3Box::Render( const q3Transform& tx, bool awake, q3Render* render ) const
 {
-	q3Transform world = q3Mul( tx, local );
+	q3Transform world = q3Mul( tx, local );		// local to world
 
+	// local 坐标下的 8个顶点
 	q3Vec3 vertices[ 8 ] = {
 		q3Vec3( -e.x, -e.y, -e.z ),
 		q3Vec3( -e.x, -e.y,  e.z ),
@@ -196,12 +217,15 @@ void q3Box::Render( const q3Transform& tx, bool awake, q3Render* render ) const
 		q3Vec3(  e.x,  e.y,  e.z )
 	};
 
+	// 转换为 世界坐标
 	for ( i32 i = 0; i < 36; i += 3 )
 	{
+		// 世界坐标顶点
 		q3Vec3 a = q3Mul( world, vertices[ kBoxIndices[ i ] ] );
 		q3Vec3 b = q3Mul( world, vertices[ kBoxIndices[ i + 1 ] ] );
 		q3Vec3 c = q3Mul( world, vertices[ kBoxIndices[ i + 2 ] ] );
 
+		// 计算法线
 		q3Vec3 n = q3Normalize( q3Cross( b - a, c - a ) );
 
 		//render->SetPenColor( 0.2f, 0.4f, 0.7f, 0.5f );
@@ -210,6 +234,7 @@ void q3Box::Render( const q3Transform& tx, bool awake, q3Render* render ) const
 		//render->Line( c.x, c.y, c.z );
 		//render->Line( a.x, a.y, a.z );
 
+		// 绘制三角面
 		render->SetTriNormal( n.x, n.y, n.z );
 		render->Triangle( a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z );
 	}

@@ -37,9 +37,9 @@
 //--------------------------------------------------------------------------------------------------
 struct q3MassData
 {
-	q3Mat3 inertia;
-	q3Vec3 center;
-	r32 mass;
+	q3Mat3 inertia;		// 惯性张量， 抵抗旋转, 相对于 模型空间原点
+	q3Vec3 center;		// 质心位置
+	r32 mass;					// 质量， 抵抗平动
 };
 
 //--------------------------------------------------------------------------------------------------
@@ -47,17 +47,17 @@ struct q3MassData
 //--------------------------------------------------------------------------------------------------
 struct q3Box
 {
-	q3Transform local;
-	q3Vec3 e; // extent, as in the extent of each OBB axis
+	q3Transform local;			// 相对父刚体的位置
+	q3Vec3 e; 							// 每个轴方向的 半长； extent, as in the extent of each OBB axis
 
-	q3Box* next;
-	class q3Body* body;
-	r32 friction;
-	r32 restitution;
-	r32 density;
-	i32 broadPhaseIndex;
+	q3Box* next;						// 同一个 刚体 上的多个 box 
+	class q3Body* body;			// 所属 刚体
+	r32 friction;						// 摩擦系数
+	r32 restitution;				// 恢复系数（弹性）
+	r32 density;						// 密度
+	i32 broadPhaseIndex;		// 宽相位树 中的 索引
 	mutable void* userData;
-	mutable bool sensor;
+	mutable bool sensor;		// 是否为 传感器
 
 	void SetUserdata( void* data ) const;
 	void* GetUserdata( ) const;

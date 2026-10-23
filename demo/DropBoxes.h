@@ -29,6 +29,7 @@
 
 #include "Demo.h"
 
+// box 不断的掉落
 struct DropBoxes : public Demo
 {
 	virtual void Init( )

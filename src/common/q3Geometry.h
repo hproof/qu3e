@@ -64,13 +64,16 @@ struct q3HalfSpace
 
 //--------------------------------------------------------------------------------------------------
 // q3RaycastData
+// 射线检测 数据
 //--------------------------------------------------------------------------------------------------
 struct q3RaycastData
 {
+	// 输入参数， 位置+朝向+长度
 	q3Vec3 start;	// Beginning point of the ray
 	q3Vec3 dir;		// Direction of the ray (normalized)
 	r32 t;			// Time specifying ray endpoint
 
+	// 命中点的 时间/法线
 	r32 toi;		// Solved time of impact
 	q3Vec3 normal;	// Surface normal at impact
 

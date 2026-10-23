@@ -52,6 +52,7 @@ inline const q3Mat3 q3Mul( const q3Mat3& r, const q3Mat3& q )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 计算 t*u (先u后t)
 inline const q3Transform q3Mul( const q3Transform& t, const q3Transform& u )
 {
 	q3Transform v;
@@ -81,6 +82,7 @@ inline const q3HalfSpace q3Mul( const q3Transform& tx, const q3Vec3& scale, cons
 }
 
 //--------------------------------------------------------------------------------------------------
+// 计算 v 在 tx 内的 局部坐标
 inline const q3Vec3 q3MulT( const q3Transform& tx, const q3Vec3& v )
 {
 	return q3Transpose( tx.rotation ) * (v - tx.position);
