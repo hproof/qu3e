@@ -37,8 +37,8 @@ class Clock
 public:
 	Clock( );
 
-	float Start( );
-	void Stop( );
+	float Start( );			// 开始帧， 返回 delta
+	void Stop( );				// 结束帧
 
 private:
   hr_clock::time_point m_start;

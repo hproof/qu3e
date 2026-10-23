@@ -36,6 +36,8 @@
 #include "stb_image.h"
 #include "Demo.h"
 
+
+// 更新 物理场景
 void UpdateScene( f32 time )
 {
 	// The time accumulator is used to allow the application to render at

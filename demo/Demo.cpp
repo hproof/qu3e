@@ -55,11 +55,12 @@ static GLuint fontTex;
 int windowWidth;
 int windowHeight;
 i32 demoCount;
-i32 currentDemo;
+i32 currentDemo;		// 当前 demo， 在 MainLoop 中切换
 char sceneFileName[ 256 ];
 i32 lastDemo;
 Demo* demos[ Q3_DEMO_MAX_COUNT ];
 
+// 这貌似是 实现一个 renderer， 提供给 engine 使用， 用于绘制一些 调试信息 
 class Renderer : public q3Render
 {
 public:
@@ -129,6 +130,7 @@ private:
 
 Renderer renderer;
 
+// 用于绘制 imgui 元素
 // This is the main rendering function that you have to implement and provide to ImGui (via setting up 'RenderDrawListsFn' in the ImGuiIO structure)
 // If text or lines are blurry when integrating ImGui in your engine:
 // - in your Render function, try translating your projection matrix by (0.5f,0.5f) or (0.375f,0.375f)
@@ -176,10 +178,15 @@ static void ImImpl_RenderDrawLists(ImDrawList** const cmd_lists, int cmd_lists_c
         glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(ImDrawVert), (void*)(vtx_buffer + offsetof(ImDrawVert, col)));
 
         int vtx_offset = 0;
-		for (size_t cmd_i = 0; cmd_i < cmd_list->commands.size(); cmd_i++)
+				for (size_t cmd_i = 0; cmd_i < cmd_list->commands.size(); cmd_i++)
         {
-			const ImDrawCmd* pcmd = &cmd_list->commands[cmd_i];
-            glScissor((int)pcmd->clip_rect.x, (int)(height - pcmd->clip_rect.w), (int)(pcmd->clip_rect.z - pcmd->clip_rect.x), (int)(pcmd->clip_rect.w - pcmd->clip_rect.y));
+						// 每个 cmd 中已经包含了完整的 顶点数组， 直接绘制即可
+						const ImDrawCmd* pcmd = &cmd_list->commands[cmd_i];
+						// clip_rect = {xMin, yMin, xMax, yMax} 格式， 左上角为00， Y 向下
+            glScissor((int)pcmd->clip_rect.x, 									// x = xMin
+							(int)(height - pcmd->clip_rect.w), 								// y = height - yMax
+							(int)(pcmd->clip_rect.z - pcmd->clip_rect.x), 		// width = xMax - xMin
+							(int)(pcmd->clip_rect.w - pcmd->clip_rect.y));		// height = yMax - yMin
             glDrawArrays(GL_TRIANGLES, vtx_offset, pcmd->vtx_count);
             vtx_offset += pcmd->vtx_count;
         }
@@ -196,13 +203,15 @@ static void ImImpl_RenderDrawLists(ImDrawList** const cmd_lists, int cmd_lists_c
     glPopAttrib();
 }
 
+// 处理 鼠标按下/抬起事件
 void Mouse( int button, int state, int x, int y )
 {
 	mouseX = x;
 	mouseY = y;
-	ImGuiIO& io = ImGui::GetIO();
+	ImGuiIO& io = ImGui::GetIO();		// 获取 输入/输出 模块
 	io.MousePos = ImVec2( (float)mouseX, (float)mouseY );
 
+	// 鼠标按下
 	if ( state == GLUT_DOWN )
 	{
 		switch(button)
@@ -221,6 +230,7 @@ void Mouse( int button, int state, int x, int y )
 		}
 	}
 
+	// 鼠标抬起
 	else if ( state == GLUT_UP )
 	{
 		switch(button)
@@ -239,6 +249,8 @@ void Mouse( int button, int state, int x, int y )
 	}
 }
 
+
+// 处理 鼠标移动事件
 void MouseMotion( int dx, int dy )
 {
 	mouseX = dx;
@@ -247,56 +259,61 @@ void MouseMotion( int dx, int dy )
 	io.MousePos = ImVec2( (float)mouseX, (float)mouseY );
 }
 
+// 相机位置
+// 3D 坐标系： Y向上， Z 向后， X 向右, 右手坐标系
 namespace Camera
 {
-	float position[ 3 ] = { 0.0f, 5.0f, 20.0f };
+	float position[ 3 ] = { 0.0f, 5.0f, 20.0f };			// 向上5， 向后20
 	float target[ 3 ] = { 0.0f, 0.0f, 0.0f };
 };
 
+// 光照参数
 namespace Light
 {
-	float ambient[ 4 ] = { 1.0f, 1.0f, 1.0f, 0.5f };
-	float diffuse[ 4 ] = { 0.2f, 0.4f, 0.7f, 1.0f };
+	float ambient[ 4 ] = { 1.0f, 1.0f, 1.0f, 0.5f };			// 环境光
+	float diffuse[ 4 ] = { 0.2f, 0.4f, 0.7f, 1.0f };			// 漫反射
 	float specular[ 4 ] = { 1.0f, 1.0f, 1.0f, 1.0f };
 }
 
+
+// 处理 键盘按下事件
 void Keyboard(unsigned char key, int x, int y)
 {
-	const float increment = 0.2f;
+	const float increment = 0.2f;			// 移动距离
 
 	switch(key)
 	{
-	case 27:
+	case 27:				// ESC
 		exit( 0 );
 		break;
-	case 'p':
+	case 'p':				// 切换 Pause
 		paused = paused ? true : false;
 		break;
-	case ' ':
+	case ' ':				// 恢复执行
 		paused = true;
 		singleStep = true;
 		break;
-	case 'w':
+	case 'w':				// 向前 -Z 移动
 		Camera::position[ 2 ] -= increment;
 		Camera::target[ 2 ] -= increment;
 		break;
-	case 's':
+	case 's':				// 向后 +Z 移动
 		Camera::position[ 2 ] += increment;
 		Camera::target[ 2 ] += increment;
 		break;
-	case 'a':
+	case 'a':				// 向左， -X 
 		Camera::position[ 0 ] -= increment;
 		Camera::target[ 0 ] -= increment;
 		break;
-	case 'd':
+	case 'd':				// 向右， +X
 		Camera::position[ 0 ] += increment;
 		Camera::target[ 0 ] += increment;
 		break;
-	case 'q':
+	case 'q':				// 降低高度
 		Camera::position[ 1 ] -= increment;
 		Camera::target[ 1 ] -= increment;
 		break;
-	case 'e':
+	case 'e':				// 提升高度
 		Camera::position[ 1 ] += increment;
 		Camera::target[ 1 ] += increment;
 		break;
@@ -305,6 +322,7 @@ void Keyboard(unsigned char key, int x, int y)
 		break;
 	}
 
+	// 设置到 imgui
 	ImGuiIO& io = ImGui::GetIO();
 	io.KeysDown[key] = true;
 
@@ -315,9 +333,11 @@ void Keyboard(unsigned char key, int x, int y)
 	demos[ currentDemo ]->KeyDown( key );
 }
 
+
+// 处理 键盘松开
 void KeyboardUp(unsigned char key, int x, int y)
 {
-
+	// 设置到 imgui
 	ImGuiIO& io = ImGui::GetIO();
 	io.KeysDown[key] = false;
 
@@ -328,6 +348,8 @@ void KeyboardUp(unsigned char key, int x, int y)
 	demos[ currentDemo ]->KeyUp( key );
 }
 
+
+// 重置 MVP 信息
 void Reshape( int width, int height )
 {
 	if ( height <= 0 )
@@ -350,6 +372,7 @@ void Reshape( int width, int height )
 		);
 }
 
+// 开始 imgui 帧
 void UpdateImGui( float dt )
 {
 	ImGuiIO& io = ImGui::GetIO();
@@ -368,13 +391,18 @@ void UpdateImGui( float dt )
 // In main.cpp
 void UpdateScene( f32 time );
 
+
+// 渲染循环, 包括 UI/场景/demo 等
 void DisplayLoop ( void )
 {
+	// 重置 MVP 信息
 	i32 w = glutGet( GLUT_WINDOW_WIDTH );
 	Reshape( w, glutGet( GLUT_WINDOW_HEIGHT ) );
 
+	// 开始 imgui 帧
 	UpdateImGui( 1.0f / 60.0f );
 
+	// 绘制 imgui 内容
 	ImGui::SetNewWindowDefaultPos( ImVec2( float( w - 300 - 30 ), 30 ) );
 	ImGui::Begin( "q3Scene Settings", NULL, ImVec2( 300, 225 ) );
 	ImGui::Combo( "Demo", &currentDemo, "Drop Boxes\0Ray Push\0Box Stack\0Test\0" );
@@ -394,19 +422,27 @@ void DisplayLoop ( void )
 	}
 	ImGui::End( );
 
+	// 清空背景
 	glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
+	// 绘制场景
 	scene.Render( &renderer );
 
+	// 绘制 demo
 	demos[ currentDemo ]->Render( &renderer );
 
+	// 绘制 imgui
 	ImGui::Render( );
 
+	// 呈现
 	glutSwapBuffers( );
 }
 
+
+// 主循环, 更新 scene 
 void MainLoop( void )
 {
+	// 切换 demo
 	if ( currentDemo != lastDemo )
 	{
 		demos[ lastDemo ]->Shutdown( );
@@ -415,19 +451,22 @@ void MainLoop( void )
 	}
 
 
-	f32 time = g_clock.Start( );
+	// 更新场景
+	f32 time = g_clock.Start( );			// 开始帧， 返回 deltaTime
 
 	scene.SetAllowSleep( enableSleep );
 	scene.SetEnableFriction( enableFriction );
 	scene.SetIterations( velocityIterations );
 
-	UpdateScene( time );
+	UpdateScene( time );		// 更新物理场景
 
 	g_clock.Stop( );
-	
+
+	// 通知重绘
 	glutPostRedisplay();
 }
 
+// 初始化 imgui, 键盘映射/字体/绘制函数
 void InitImGui( )
 {
 	int w = glutGet( GLUT_WINDOW_WIDTH );
@@ -479,6 +518,7 @@ void InitImGui( )
 	ImGui::GetIO( ).IniSavingRate = -1.0f;
 }
 
+// 初始化 app
 int InitApp( int argc, char** argv )
 {
 	// Starting width / height of the window
@@ -500,14 +540,14 @@ int InitApp( int argc, char** argv )
 	glutInitWindowPosition( (screenWidth - kWindowWidth) / 2, (screenHeight - kWindowHeight) / 2 );
 	glutCreateWindow( "qu3e Physics by Randy Gaul" );
 
-	glutDisplayFunc( DisplayLoop );
-	glutReshapeFunc( Reshape );
+	glutDisplayFunc( DisplayLoop );			// 绘制函数
+	glutReshapeFunc( Reshape );					// 重置投影矩阵
 	glutKeyboardUpFunc( KeyboardUp );
 	glutKeyboardFunc( Keyboard );
 	glutMouseFunc( Mouse );
 	glutMotionFunc( MouseMotion );
 	glutPassiveMotionFunc( MouseMotion );
-	glutIdleFunc( MainLoop );
+	glutIdleFunc( MainLoop );						// 空闲回调
 
 	// Setup all the open-gl states we want to use (ones that don't change in the lifetime of the application)
 	// Note: These can be changed anywhere, but generally we don't change the back buffer color
