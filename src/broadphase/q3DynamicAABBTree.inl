@@ -48,6 +48,7 @@ inline void q3DynamicAABBTree::DeallocateNode( i32 index )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 通过 aabb 初筛， 回调 cb
 template <typename T>
 inline void q3DynamicAABBTree::Query( T *cb, const q3AABB& aabb ) const
 {
