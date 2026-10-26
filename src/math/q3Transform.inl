@@ -56,7 +56,9 @@ inline const q3Mat3 q3Mul( const q3Mat3& r, const q3Mat3& q )
 inline const q3Transform q3Mul( const q3Transform& t, const q3Transform& u )
 {
 	q3Transform v;
+	// 列向量, 右乘， 先 u 后 t
 	v.rotation = q3Mul( t.rotation, u.rotation );
+	// 先用 t.rotation 旋转 u.position; 然后加上 t.position 
 	v.position = q3Mul( t.rotation, u.position ) + t.position;
 	return v;
 }

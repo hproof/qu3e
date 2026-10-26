@@ -37,9 +37,11 @@
 //--------------------------------------------------------------------------------------------------
 // q3Scene
 //--------------------------------------------------------------------------------------------------
+// 构造函数：初始化各成员。
+// dt/gravity/iterations 直接保存；sleep、friction 默认开启。
 q3Scene::q3Scene( r32 dt, const q3Vec3& gravity, i32 iterations )
-	: m_contactManager( &m_stack )
-	, m_boxAllocator( sizeof( q3Box ), 256 )
+	: m_contactManager( &m_stack )            // 接触管理器使用栈分配器（临时数据）
+	, m_boxAllocator( sizeof( q3Box ), 256 )  // q3Box 页式分配器，每页 256 个
 	, m_bodyCount( 0 )
 	, m_bodyList( NULL )
 	, m_gravity( gravity )
@@ -58,19 +60,31 @@ q3Scene::~q3Scene( )
 }
 
 //--------------------------------------------------------------------------------------------------
+//==============================================================================
+// Step()：把物理世界向前推进一个固定时间步长 dt。完整流程：
+//   1. 宽相位更新 + 碰撞检测（TestCollisions）
+//   2. 构建「岛屿」（island，由接触连接起来的刚体连通分量）
+//   3. 对每个岛屿独立求解（约束求解 + 积分）
+//   4. 更新宽相位 AABB、查找新接触、清空力
+//==============================================================================
 void q3Scene::Step( )
 {
+	// 若有新加入的盒体，先更新宽相位里的碰撞对
 	if ( m_newBox )
 	{
 		m_contactManager.m_broadphase.UpdatePairs( );
 		m_newBox = false;
 	}
 
+	// 碰撞检测：用宽相位找到的潜在对，做精确 SAT 检测并生成接触约束
 	m_contactManager.TestCollisions( );
 
+	// 清除所有刚体的「已归属岛屿」标志，准备重新建岛
 	for ( q3Body* body = m_bodyList; body; body = body->m_next )
 		body->m_flags &= ~q3Body::eIsland;
 
+	// 在栈上为岛屿预留「最坏情况」的内存（所有 body 都是同一岛屿时的大小）。
+	// 栈分配极快，适合这种每帧临时、用完即弃的分配。
 	// Size the stack island, pick worst case size
 	m_stack.Reserve(
 		sizeof( q3Body* ) * m_bodyCount
@@ -80,6 +94,7 @@ void q3Scene::Step( )
 		+ sizeof( q3Body* ) * m_bodyCount
 	);
 
+	// 初始化岛屿求解器的工作缓冲区
 	q3Island island;
 	island.m_bodyCapacity = m_bodyCount;
 	island.m_contactCapacity = m_contactManager.m_contactCount;
@@ -95,19 +110,25 @@ void q3Scene::Step( )
 	island.m_gravity = m_gravity;
 	island.m_iterations = m_iterations;
 
+	// ---- 构建并求解每个岛屿 ----
+	// 岛屿 = 由接触（约束）连接起来的刚体连通分量。彼此不接触的刚体分属不同岛屿，
+	// 可以独立求解（互相不影响），这也是并行化的基础。
 	// Build each active island and then solve each built island
 	i32 stackSize = m_bodyCount;
 	q3Body** stack = (q3Body**)m_stack.Allocate( sizeof( q3Body* ) * stackSize );
 	for ( q3Body* seed = m_bodyList; seed; seed = seed->m_next )
 	{
+		// 已归属某岛屿的种子跳过
 		// Seed cannot be apart of an island already
 		if ( seed->m_flags & q3Body::eIsland )
 			continue;
 
+		// 休眠中的刚体跳过（不参与求解）
 		// Seed must be awake
 		if ( !(seed->m_flags & q3Body::eAwake) )
 			continue;
 
+		// 静态刚体不作为种子（避免岛屿过大）；它会在被动态刚体接触时纳入岛屿
 		// Seed cannot be a static body in order to keep islands
 		// as small as possible
 		if ( seed->m_flags & q3Body::eStatic )
@@ -118,19 +139,25 @@ void q3Scene::Step( )
 		island.m_bodyCount = 0;
 		island.m_contactCount = 0;
 
+		// 标记种子已归属岛屿
 		// Mark seed as apart of island
 		seed->m_flags |= q3Body::eIsland;
 
+		// 用 DFS（深度优先搜索）遍历约束图，收集所有连通的身体和接触
 		// Perform DFS on constraint graph
 		while( stackCount > 0 )
 		{
+			// 弹栈，实现迭代式回溯
 			// Decrement stack to implement iterative backtracking
 			q3Body *body = stack[ --stackCount ];
 			island.Add( body );
 
+			// 唤醒与岛屿相连的所有刚体（接触唤醒传播）
 			// Awaken all bodies connected to the island
 			body->SetToAwake( );
 
+			// 不跨过静态刚体继续搜索（保持岛屿小），但静态刚体本身要留在岛屿里，
+			// 以便正确表示完整接触（例如地面和箱子之间）
 			// Do not search across static bodies to keep island
 			// formations as small as possible, however the static
 			// body itself should be apart of the island in order
@@ -138,28 +165,34 @@ void q3Scene::Step( )
 			if ( body->m_flags & q3Body::eStatic )
 				continue;
 
+			// 遍历该刚体的所有接触，把相连的刚体加入岛屿
 			// Search all contacts connected to this body
 			q3ContactEdge* contacts = body->m_contactList;
 			for ( q3ContactEdge* edge = contacts; edge; edge = edge->next )
 			{
 				q3ContactConstraint *contact = edge->constraint;
 
+				// 已加入岛屿的接触跳过
 				// Skip contacts that have been added to an island already
 				if ( contact->m_flags & q3ContactConstraint::eIsland )
 					continue;
 
+				// 没有真正碰撞的接触跳过
 				// Can safely skip this contact if it didn't actually collide with anything
 				if ( !(contact->m_flags & q3ContactConstraint::eColliding) )
 					continue;
 
+				// 传感器跳过（只检测不产生物理响应，不参与求解）
 				// Skip sensors
 				if ( contact->A->sensor || contact->B->sensor )
 					continue;
 
+				// 标记接触并加入岛屿
 				// Mark island flag and add to island
 				contact->m_flags |= q3ContactConstraint::eIsland;
 				island.Add( contact );
 
+				// 把接触另一端的刚体也压栈，实现唤醒传播
 				// Attempt to add the other body in the contact to the island
 				// to simulate contact awakening propogation
 				q3Body* other = edge->other;
@@ -175,9 +208,11 @@ void q3Scene::Step( )
 
 		assert( island.m_bodyCount != 0 );
 
+		// 初始化岛屿（预热速度等），然后求解（迭代约束求解 + 积分）
 		island.Initialize( );
 		island.Solve( );
 
+		// 清除岛屿中静态刚体的 island 标志，让它们能参与其他岛屿
 		// Reset all static island flags
 		// This allows static bodies to participate in other island formations
 		for ( i32 i = 0; i < island.m_bodyCount; i++ )
@@ -189,12 +224,14 @@ void q3Scene::Step( )
 		}
 	}
 
+	// 释放栈上的岛屿缓冲区
 	m_stack.Free( stack );
 	m_stack.Free( island.m_contactStates );
 	m_stack.Free( island.m_contacts );
 	m_stack.Free( island.m_velocities );
 	m_stack.Free( island.m_bodies );
 
+	// 更新宽相位里动态刚体的 AABB（它们经过积分后位置变了）
 	// Update the broadphase AABBs
 	for ( q3Body* body = m_bodyList; body; body = body->m_next )
 	{
@@ -204,9 +241,11 @@ void q3Scene::Step( )
 		body->SynchronizeProxies( );
 	}
 
+	// 基于更新后的 AABB 查找新的潜在接触对
 	// Look for new contacts
 	m_contactManager.FindNewContacts( );
 
+	// 清空所有刚体上累积的力和力矩（它们已在积分时用掉）
 	// Clear all forces
 	for ( q3Body* body = m_bodyList; body; body = body->m_next )
 	{
@@ -216,11 +255,14 @@ void q3Scene::Step( )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 创建新刚体并加入场景。
+// 内存从堆分配器（m_heap）分配，用 placement new 构造，然后头插进 m_bodyList 链表。
 q3Body* q3Scene::CreateBody( const q3BodyDef& def )
 {
 	q3Body* body = (q3Body*)m_heap.Allocate( sizeof( q3Body ) );
-	new (body) q3Body( def, this );
+	new (body) q3Body( def, this );   // placement new：在已分配内存上构造 q3Body
 
+	// 头插法：新刚体插入链表头部
 	// Add body to scene bodyList
 	body->m_prev = NULL;
 	body->m_next = m_bodyList;
@@ -235,14 +277,18 @@ q3Body* q3Scene::CreateBody( const q3BodyDef& def )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 从场景移除一个刚体：先移除它的所有接触和盒体，再从链表摘除，最后释放内存。
 void q3Scene::RemoveBody( q3Body* body )
 {
 	assert( m_bodyCount > 0 );
 
+	// 移除与该刚体相关的所有接触
 	m_contactManager.RemoveContactsFromBody( body );
 
+	// 移除刚体上附着的所有盒体
 	body->RemoveAllBoxes( );
 
+	// 从双向链表中摘除该刚体
 	// Remove body from scene bodyList
 	if ( body->m_next )
 		body->m_next->m_prev = body->m_prev;
@@ -343,8 +389,12 @@ void q3Scene::SetContactListener( q3ContactListener* listener )
 }
 
 //--------------------------------------------------------------------------------------------------
+// AABB 查询：找出所有可能与该 AABB 相交的形状。
+// 流程：先用宽相位树快速筛出 AABB 重叠的候选盒体，再对每个候选做精确的 AABB-AABB 检测，
+// 真正相交才回调 ReportShape。返回 true 继续查询，false 提前终止。
 void q3Scene::QueryAABB( q3QueryCallback *cb, const q3AABB& aabb ) const
 {
+	// 局部回调包装器：宽相位树查询时回调 TreeCallBack
 	struct SceneQueryWrapper
 	{
 		bool TreeCallBack( i32 id )
@@ -352,6 +402,7 @@ void q3Scene::QueryAABB( q3QueryCallback *cb, const q3AABB& aabb ) const
 			q3AABB aabb;
 			q3Box *box = (q3Box *)broadPhase->m_tree.GetUserData( id );
 
+			// 精确检测：算该盒体的世界 AABB，与查询 AABB 做相交测试
 			box->ComputeAABB( box->body->GetTransform( ), &aabb );
 
 			if ( q3AABBtoAABB( m_aabb, aabb ) )
@@ -375,6 +426,9 @@ void q3Scene::QueryAABB( q3QueryCallback *cb, const q3AABB& aabb ) const
 }
 
 //--------------------------------------------------------------------------------------------------
+// 点查询：找出所有包含世界空间点 point 的形状。
+// 因为宽相位树只支持 AABB 查询，所以把点扩成一个很小的 AABB（半宽 0.5）去查询，
+// 再对候选盒体做精确的点包含测试（TestPoint）。
 void q3Scene::QueryPoint( q3QueryCallback *cb, const q3Vec3& point ) const
 {
 	struct SceneQueryWrapper
@@ -383,6 +437,7 @@ void q3Scene::QueryPoint( q3QueryCallback *cb, const q3Vec3& point ) const
 		{
 			q3Box *box = (q3Box *)broadPhase->m_tree.GetUserData( id );
 
+			// 精确检测：点是否在盒体内
 			if ( box->TestPoint( box->body->GetTransform( ), m_point ) )
 			{
 				cb->ReportShape( box );
@@ -400,6 +455,7 @@ void q3Scene::QueryPoint( q3QueryCallback *cb, const q3Vec3& point ) const
 	wrapper.m_point = point;
 	wrapper.broadPhase = &m_contactManager.m_broadphase;
 	wrapper.cb = cb;
+	// 把点「加粗」成一个小 AABB，以便交给宽相位树查询
 	const r32 k_fattener = r32( 0.5 );
 	q3Vec3 v( k_fattener, k_fattener, k_fattener );
 	q3AABB aabb;
@@ -409,6 +465,8 @@ void q3Scene::QueryPoint( q3QueryCallback *cb, const q3Vec3& point ) const
 }
 
 //--------------------------------------------------------------------------------------------------
+// 射线查询：找出所有被射线击中的形状。
+// 先用宽相位树筛出射线穿过的 AABB 的候选，再对每个候选做精确的 Raycast。
 void q3Scene::RayCast( q3QueryCallback *cb, q3RaycastData& rayCast ) const
 {
 	struct SceneQueryWrapper
@@ -417,6 +475,7 @@ void q3Scene::RayCast( q3QueryCallback *cb, q3RaycastData& rayCast ) const
 		{
 			q3Box *box = (q3Box *)broadPhase->m_tree.GetUserData( id );
 
+			// 精确检测：射线与盒体的 slab 求交
 			if ( box->Raycast( box->body->GetTransform( ), m_rayCast ) )
 			{
 				return cb->ReportShape( box );
@@ -429,7 +488,7 @@ void q3Scene::RayCast( q3QueryCallback *cb, q3RaycastData& rayCast ) const
 		const q3BroadPhase *broadPhase;
 		q3RaycastData *m_rayCast;
 	};
-	
+
 	SceneQueryWrapper wrapper;
 	wrapper.m_rayCast = &rayCast;
 	wrapper.broadPhase = &m_contactManager.m_broadphase;
@@ -438,6 +497,9 @@ void q3Scene::RayCast( q3QueryCallback *cb, q3RaycastData& rayCast ) const
 }
 
 //--------------------------------------------------------------------------------------------------
+// 场景转储：把所有刚体和形状输出成 C++ 代码到日志文件，可直接复制进 demo 重建场景。
+// 注意：接触不会被记录（缓存的历史求解不会被保存），所以最好在场景初始化时 dump，
+// 而不是模拟中途 dump。
 void q3Scene::Dump( FILE* file ) const
 {
 	fprintf( file, "// Ensure 64/32-bit memory compatability with the dump contents\n" );

@@ -90,6 +90,7 @@ struct q3Contact
 	u8 warmStarted;				// Used for debug rendering
 };
 
+// 碰撞流形/结果
 struct q3Manifold
 {
 	void SetPair( q3Box *a, q3Box *b );

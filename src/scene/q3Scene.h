@@ -33,6 +33,14 @@
 #include "../common/q3Memory.h"
 #include "../dynamics/q3ContactManager.h"
 
+//==============================================================================
+// q3Scene：物理世界（场景）的容器，也是用户操作引擎的主要入口。
+// 它持有所有刚体（q3Body）的链表、接触管理器（负责宽相位碰撞检测）、
+// 内存分配器，并在 Step() 里驱动整个模拟流程：
+//   碰撞检测 → 岛屿（island）构建 → 约束求解 → 速度/位置积分。
+// 通常一个程序只需要一个场景，用固定时间步长 dt 驱动。
+//==============================================================================
+
 //--------------------------------------------------------------------------------------------------
 // q3Scene
 //--------------------------------------------------------------------------------------------------
@@ -42,6 +50,9 @@ struct q3ContactConstraint;
 class q3Render;
 struct q3Island;
 
+// 碰撞监听器：捕获两个形状开始/结束碰撞的事件，可用于游戏逻辑和音效。
+// 注意：在这些回调里新创建的物理对象要到下一帧才会被报告；
+// 回调可能被频繁调用，实现应尽量高效。
 // This listener is used to gather information about two shapes colliding. This
 // can be used for game logic and sounds. Physics objects created in these
 // callbacks will not be reported until the following frame. These callbacks
@@ -77,9 +88,14 @@ public:
 class q3Scene
 {
 public:
+	// 构造一个物理场景。
+	// dt         ：固定时间步长（秒），如 1/60。不支持变步长。
+	// gravity    ：全局重力向量，默认 (0, -9.8, 0)，即 y 轴向下。
+	// iterations ：约束求解的迭代次数，越大越精确但越慢，常用 5~20。
 	q3Scene( r32 dt, const q3Vec3& gravity = q3Vec3( r32( 0.0 ), r32( -9.8 ), r32( 0.0 ) ), i32 iterations = 20 );
 	~q3Scene( );
 
+	// 把模拟向前推进一个固定时间步长 dt。变时间步长不被支持。
 	// Run the simulation forward in time by dt (fixed timestep). Variable
 	// timestep is not supported.
 	void Step( );
@@ -151,22 +167,22 @@ public:
 	void Dump( FILE* file ) const;
 
 private:
-	q3ContactManager m_contactManager;
-	q3PagedAllocator m_boxAllocator;
+	q3ContactManager m_contactManager;   // 接触管理器：宽相位 + 接触约束的管理
+	q3PagedAllocator m_boxAllocator;     // q3Box 对象的页式内存分配器
 
-	i32 m_bodyCount;
-	q3Body* m_bodyList;
+	i32 m_bodyCount;                     // 刚体数量
+	q3Body* m_bodyList;                  // 刚体链表头（所有刚体串成链表）
 
-	q3Stack m_stack;
-	q3Heap m_heap;
+	q3Stack m_stack;                     // 栈分配器：Step 里为岛屿临时分配内存（快）
+	q3Heap m_heap;                       // 堆分配器：刚体等持久对象的分配
 
-	q3Vec3 m_gravity;
-	r32 m_dt;
-	i32 m_iterations;
+	q3Vec3 m_gravity;                    // 全局重力向量
+	r32 m_dt;                            // 固定时间步长
+	i32 m_iterations;                    // 约束求解迭代次数
 
-	bool m_newBox;
-	bool m_allowSleep;
-	bool m_enableFriction;
+	bool m_newBox;                       // 是否有新盒体加入（需要重建宽相位对）
+	bool m_allowSleep;                   // 是否允许刚体休眠（CPU 优化）
+	bool m_enableFriction;               // 是否启用摩擦力
 
 	friend class q3Body;
 };

@@ -34,6 +34,7 @@
 // 检测 box 和 point 相交
 bool q3Box::TestPoint( const q3Transform& tx, const q3Vec3& p ) const
 {
+	// OpenGL, 列向量， 右乘；  world = tx * local 
 	q3Transform world = q3Mul( tx, local );		// 计算 box 的世界变化
 	q3Vec3 p0 = q3MulT( world, p );						// 把 p 变化到 box 的 局部坐标
 
@@ -89,7 +90,7 @@ bool q3Box::Raycast( const q3Transform& tx, q3RaycastData* raycast ) const
 			r32 s = q3Sign( d[ i ] );
 			r32 ei = e[ i ] * s;
 			q3Vec3 n( 0, 0, 0 );
-			n[ i ] = -s;
+			n[ i ] = -s;		// 法线 和 射线方向 对立
 
 			t0 = -(ei + p[ i ]) * d0;			// 进入 slab 的 time 
 			t1 = (ei - p[ i ]) * d0;			// 离开 slab 的 time
@@ -109,8 +110,8 @@ bool q3Box::Raycast( const q3Transform& tx, q3RaycastData* raycast ) const
 		}
 	}
 
-	raycast->normal = q3Mul( world.rotation, n0 ); 
-	raycast->toi = tmin;
+	raycast->normal = q3Mul( world.rotation, n0 ); 		// 法线 local to world
+	raycast->toi = tmin;			// 碰撞发生时刻
 
 	return true;
 }
@@ -136,7 +137,7 @@ void q3Box::ComputeAABB( const q3Transform& tx, q3AABB* aabb ) const
 	for ( i32 i = 0; i < 8; ++i )
 		v[ i ] = q3Mul( world, v[ i ] );
 
-	// 计算 min-max
+	// 计算3个轴线的 min-max
 	q3Vec3 min( Q3_R32_MAX, Q3_R32_MAX, Q3_R32_MAX );
 	q3Vec3 max( -Q3_R32_MAX, -Q3_R32_MAX, -Q3_R32_MAX );
 
