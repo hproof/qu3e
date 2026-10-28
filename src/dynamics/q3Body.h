@@ -70,6 +70,21 @@ enum q3BodyType
 // 职责边界：q3Body 只保存「运动状态」（位置/朝向/线速度/角速度）和「质量属性」，
 // 并向外提供施加力/冲量、坐标变换等接口。真正的数值积分和碰撞约束求解
 // 由 q3Scene / q3Island / q3ContactSolver 完成。
+//
+// ---- 动力学概念速查（外部作用 vs 自身状态） ----
+// 外部对刚体施加的作用：
+//   力(Force)    ：持续作用，累加进 m_force，在积分阶段改变线速度（F = m·a）。
+//   力矩(Torque) ：持续作用，累加进 m_torque，在积分阶段改变角速度（τ = I·α）。
+//   冲量(Impulse)：瞬时作用，直接修改 m_linearVelocity / m_angularVelocity，
+//                  用完即弃、不存储（Δv = J/m）。
+// 刚体自身携带的状态：
+//   质量 m_mass / 逆质量 m_invMass：平动惯性，衡量抵抗线速度变化的能力。
+//   逆惯性张量 m_invInertia*：转动惯性（3×3 矩阵，相当于旋转版的「质量」）。
+//   速度 m_linearVelocity / m_angularVelocity：当前的运动状态。
+//
+// 注意：ApplyLinearForce 内部执行 m_force += force * m_mass，积分时再乘
+// m_invMass 抵消，因此该接口传入的「力」实际被当作「加速度」处理
+//（Δv = force·dt）。这就是重力（加速度）可以直接传进去的原因。
 //==============================================================================
 class q3Body
 {
