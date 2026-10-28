@@ -34,6 +34,8 @@
 //--------------------------------------------------------------------------------------------------
 // q3ContactManager
 //--------------------------------------------------------------------------------------------------
+// 构造函数：初始化栈分配器、接触约束分配器（每块 256 个）、宽相位，
+// 以及接触链表、计数和事件回调为空。
 q3ContactManager::q3ContactManager( q3Stack* stack )
 	: m_stack( stack )
 	, m_allocator( sizeof( q3ContactConstraint ), 256 )
@@ -49,12 +51,15 @@ void q3ContactManager::AddContact( q3Box *A, q3Box *B )
 {
 	q3Body *bodyA = A->body;
 	q3Body *bodyB = B->body;
+	// 先做廉价判断：两刚体是否可能碰撞（类型/碰撞层过滤）
 	if ( !bodyA->CanCollide( bodyB ) )
 		return;
 
 	// Search for existing matching contact
 	// Return if found duplicate to avoid duplicate constraints
 	// Mark pre-existing duplicates as active
+	// 在 A 的接触边链表里找是否已存在与 bodyB 的接触；
+	// 若形状也相同，说明这对形状的约束已存在，直接返回，避免重复约束。
 	q3ContactEdge* edge = A->body->m_contactList;
 	while ( edge )
 	{
@@ -72,6 +77,7 @@ void q3ContactManager::AddContact( q3Box *A, q3Box *B )
 	}
 
 	// Create new contact
+	// 分配并初始化新的接触约束
 	q3ContactConstraint *contact = (q3ContactConstraint*)m_allocator.Allocate( );
 	contact->A = A;
 	contact->B = B;
@@ -79,13 +85,14 @@ void q3ContactManager::AddContact( q3Box *A, q3Box *B )
 	contact->bodyB = B->body;
 	contact->manifold.SetPair( A, B );
 	contact->m_flags = 0;
-	contact->friction = q3MixFriction( A, B );
-	contact->restitution = q3MixRestitution( A, B );
+	contact->friction = q3MixFriction( A, B );        // 混合摩擦系数
+	contact->restitution = q3MixRestitution( A, B );  // 混合恢复系数
 	contact->manifold.contactCount = 0;
 
 	for ( i32 i = 0; i < 8; ++i )
 		contact->manifold.contacts[ i ].warmStarted = 0;
 
+	// 头插法挂到全局接触链表
 	contact->prev = NULL;
 	contact->next = m_contactList;
 	if ( m_contactList )
@@ -93,6 +100,7 @@ void q3ContactManager::AddContact( q3Box *A, q3Box *B )
 	m_contactList = contact;
 
 	// Connect A
+	// 把接触约束连接到 A 刚体的接触边链表
 	contact->edgeA.constraint = contact;
 	contact->edgeA.other = bodyB;
 
@@ -103,6 +111,7 @@ void q3ContactManager::AddContact( q3Box *A, q3Box *B )
 	bodyA->m_contactList = &contact->edgeA;
 
 	// Connect B
+	// 同样连接到 B 刚体的接触边链表
 	contact->edgeB.constraint = contact;
 	contact->edgeB.other = bodyA;
 
@@ -112,6 +121,7 @@ void q3ContactManager::AddContact( q3Box *A, q3Box *B )
 		bodyB->m_contactList->prev = &contact->edgeB;
 	bodyB->m_contactList = &contact->edgeB;
 
+	// 新接触产生，唤醒两端刚体（让它们参与下一帧求解）
 	bodyA->SetToAwake( );
 	bodyB->SetToAwake( );
 
@@ -119,18 +129,22 @@ void q3ContactManager::AddContact( q3Box *A, q3Box *B )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 让宽相位重新配对可能相交的形状（会回调 AddContact 建立新接触）。
 void q3ContactManager::FindNewContacts( )
 {
 	m_broadphase.UpdatePairs( );
 }
 
 //--------------------------------------------------------------------------------------------------
+// 移除一个接触约束：先从 A、B 两刚体的接触边链表里摘除两条边，
+// 再从全局链表摘除该约束，最后归还内存。
 void q3ContactManager::RemoveContact( q3ContactConstraint *contact )
 {
 	q3Body *A = contact->bodyA;
 	q3Body *B = contact->bodyB;
 
 	// Remove from A
+	// 从 A 的接触边链表摘除 edgeA
 	if ( contact->edgeA.prev )
 		contact->edgeA.prev->next = contact->edgeA.next;
 
@@ -141,6 +155,7 @@ void q3ContactManager::RemoveContact( q3ContactConstraint *contact )
 		A->m_contactList = contact->edgeA.next;
 
 	// Remove from B
+	// 从 B 的接触边链表摘除 edgeB
 	if ( contact->edgeB.prev )
 		contact->edgeB.prev->next = contact->edgeB.next;
 
@@ -150,10 +165,12 @@ void q3ContactManager::RemoveContact( q3ContactConstraint *contact )
 	if ( &contact->edgeB == B->m_contactList )
 		B->m_contactList = contact->edgeB.next;
 
+	// 接触被移除，唤醒两端刚体（它们的状态发生了变化）
 	A->SetToAwake( );
 	B->SetToAwake( );
 
 	// Remove contact from the manager
+	// 从全局链表摘除该约束
 	if ( contact->prev )
 		contact->prev->next = contact->next;
 
@@ -169,19 +186,21 @@ void q3ContactManager::RemoveContact( q3ContactConstraint *contact )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 移除某刚体上的所有接触：遍历它的接触边链表，逐个调用 RemoveContact。
 void q3ContactManager::RemoveContactsFromBody( q3Body *body )
 {
 	q3ContactEdge* edge = body->m_contactList;
 
 	while( edge )
 	{
-		q3ContactEdge* next = edge->next;
+		q3ContactEdge* next = edge->next;   // 先记住下一个（RemoveContact 会改链表）
 		RemoveContact( edge->constraint );
 		edge = next;
 	}
 }
 
 //--------------------------------------------------------------------------------------------------
+// 把某刚体的所有形状从宽相位中移除（用于删除刚体时清理）。
 void q3ContactManager::RemoveFromBroadphase( q3Body *body )
 {
 	q3Box* box = body->m_boxes;
@@ -194,6 +213,13 @@ void q3ContactManager::RemoveFromBroadphase( q3Body *body )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 接触维护的核心：遍历所有接触约束，做窄相位碰撞检测并更新状态。
+// 对每个约束依次处理：
+//   1. 清 eIsland 标记；
+//   2. 两端都休眠 → 跳过（不需要更新）；
+//   3. 不再可能碰撞（CanCollide 或宽相位无重叠）→ 移除该约束；
+//   4. 否则重新做碰撞检测，warm start 复用上一帧的冲量，
+//      并触发 Begin/EndContact 事件。
 void q3ContactManager::TestCollisions( void )
 {
 	q3ContactConstraint* constraint = m_contactList;
@@ -207,12 +233,14 @@ void q3ContactManager::TestCollisions( void )
 
 		constraint->m_flags &= ~q3ContactConstraint::eIsland;
 
+		// 两端都休眠的接触不更新
 		if( !bodyA->IsAwake( ) && !bodyB->IsAwake( ) )
 		{
 			constraint = constraint->next;
 			continue;
 		}
 
+		// 不再可能碰撞（如碰撞层被改、刚体类型变了）→ 移除
 		if ( !bodyA->CanCollide( bodyB ) )
 		{
 			q3ContactConstraint* next = constraint->next;
@@ -222,6 +250,7 @@ void q3ContactManager::TestCollisions( void )
 		}
 
 		// Check if contact should persist
+		// 宽相位已无重叠（包围盒都不相交了）→ 移除
 		if ( !m_broadphase.TestOverlap( A->broadPhaseIndex, B->broadPhaseIndex ) )
 		{
 			q3ContactConstraint* next = constraint->next;
@@ -229,11 +258,17 @@ void q3ContactManager::TestCollisions( void )
 			constraint = next;
 			continue;
 		}
+
+		// 保存旧流形用于 warm start（把上一帧的冲量复用过来）
 		q3Manifold* manifold = &constraint->manifold;
 		q3Manifold oldManifold = constraint->manifold;
 		q3Vec3 ot0 = oldManifold.tangentVectors[ 0 ];
 		q3Vec3 ot1 = oldManifold.tangentVectors[ 1 ];
+
+		// 重新做碰撞检测，生成新的接触点
 		constraint->SolveCollision( );
+
+		// 由法线构造两个正交切向量（构成接触点的局部坐标系）
 		q3ComputeBasis( manifold->normal, manifold->tangentVectors, manifold->tangentVectors + 1 );
 
 		for ( i32 i = 0; i < manifold->contactCount; ++i )
@@ -243,6 +278,7 @@ void q3ContactManager::TestCollisions( void )
 			u8 oldWarmStart = c->warmStarted;
 			c->warmStarted = u8( 0 );
 
+			// 在新流形中寻找特征标识相同的旧接触点，把旧冲量复用过来
 			for ( i32 j = 0; j < oldManifold.contactCount; ++j )
 			{
 				q3Contact *oc = oldManifold.contacts + j;
@@ -251,6 +287,7 @@ void q3ContactManager::TestCollisions( void )
 					c->normalImpulse = oc->normalImpulse;
 
 					// Attempt to re-project old friction solutions
+					// 旧的摩擦冲量在新切向基下重新投影（因为切向量可能随法线变化）
 					q3Vec3 friction = ot0 * oc->tangentImpulse[ 0 ] + ot1 * oc->tangentImpulse[ 1 ];
 					c->tangentImpulse[ 0 ] = q3Dot( friction, manifold->tangentVectors[ 0 ] );
 					c->tangentImpulse[ 1 ] = q3Dot( friction, manifold->tangentVectors[ 1 ] );
@@ -260,6 +297,7 @@ void q3ContactManager::TestCollisions( void )
 			}
 		}
 
+		// 触发碰撞事件（BeginContact / EndContact）
 		if ( m_contactListener )
 		{
 			i32 now_colliding = constraint->m_flags & q3ContactConstraint::eColliding;
@@ -277,6 +315,8 @@ void q3ContactManager::TestCollisions( void )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 调试渲染所有接触点：颜色表示 warm start 程度（越红 = warm start 越久），
+// 并从每个接触点沿法线方向画一条短线。
 void q3ContactManager::RenderContacts( q3Render* render ) const
 {
 	const q3ContactConstraint *contact = m_contactList;
@@ -285,6 +325,7 @@ void q3ContactManager::RenderContacts( q3Render* render ) const
 	{
 		const q3Manifold *m = &contact->manifold;
 
+		// 只渲染正在碰撞的接触
 		if ( !(contact->m_flags & q3ContactConstraint::eColliding) )
 		{
 			contact = contact->next;

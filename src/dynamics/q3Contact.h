@@ -41,6 +41,7 @@ struct q3ContactConstraint;
 
 // Restitution mixing. The idea is to use the maximum bounciness, so bouncy
 // objects will never not bounce during collisions.
+// 弹性（恢复系数）混合：取两者中较大值，保证「弹的物体撞到硬的物体仍然会弹」。
 inline r32 q3MixRestitution( const q3Box* A, const q3Box* B )
 {
 	return q3Max( A->restitution, B->restitution );
@@ -48,6 +49,8 @@ inline r32 q3MixRestitution( const q3Box* A, const q3Box* B )
 
 // Friction mixing. The idea is to allow a very low friction value to
 // drive down the mixing result. Example: anything slides on ice.
+// 摩擦系数混合：取两者乘积的平方根（几何平均），这样任一方摩擦极低（如冰面）
+// 都会把最终摩擦拉低，符合「任何东西在冰上都打滑」的直觉。
 inline r32 q3MixFriction( const q3Box* A, const q3Box* B )
 {
 	return std::sqrt( A->friction * B->friction );
@@ -64,6 +67,16 @@ inline r32 q3MixFriction( const q3Box* A, const q3Box* B )
 // feature and an outgoing feature, usually a result of clipping routines. The exact info
 // stored in the feature pair can be arbitrary as long as the result is a unique ID for a
 // given intersecting configuration.
+//==============================================================================
+// q3FeaturePair：接触特征的唯一标识（feature pair）。
+// 名词：in/out = 入射/出射，I/R = incident/reference（参考面），
+// 详见 Dirk Gregorius GDC 2015 关于接触生成的演讲。
+//
+// 用途：把一个接触点在多个物理帧之间对应起来，从而「复用上一帧的解」，
+// 即 warm starting（预热）——这让盒子堆叠时更稳定、不容易抖动。
+// 特征对由「入射特征 + 出射特征」组合而成，通常是裁剪（clipping）算法的产物。
+// 只要该组合能唯一标识一个相交构型，存的具体内容可以任意。
+//==============================================================================
 union q3FeaturePair
 {
 	struct
@@ -77,20 +90,22 @@ union q3FeaturePair
 	i32 key;
 };
 
+// 单个接触点：记录两物体相碰的位置、穿透深度、以及求解用到的冲量/质量等状态。
 struct q3Contact
 {
-	q3Vec3 position;			// World coordinate of contact
-	r32 penetration;			// Depth of penetration from collision
-	r32 normalImpulse;			// Accumulated normal impulse
-	r32 tangentImpulse[ 2 ];	// Accumulated friction impulse
-	r32 bias;					// Restitution + baumgarte
-	r32 normalMass;				// Normal constraint mass
-	r32 tangentMass[ 2 ];		// Tangent constraint mass
-	q3FeaturePair fp;			// Features on A and B for this contact
-	u8 warmStarted;				// Used for debug rendering
+	q3Vec3 position;			// 接触点的世界坐标
+	r32 penetration;			// 穿透深度（两物体互相嵌入的深度）
+	r32 normalImpulse;			// 累计法向冲量（沿法线方向，用于推开物体）
+	r32 tangentImpulse[ 2 ];	// 累计切向（摩擦）冲量（两个切向分量）
+	r32 bias;					// 位置修正偏置（恢复系数 + Baumgarte 稳定项）
+	r32 normalMass;				// 法向约束质量（有效质量的倒数形式，见 PreSolve）
+	r32 tangentMass[ 2 ];		// 切向约束质量（同上，用于摩擦约束）
+	q3FeaturePair fp;			// 该接触点的特征标识（跨帧匹配/warm start 用）
+	u8 warmStarted;				// 已 warm start 的帧数（调试渲染用）
 };
 
-// 碰撞流形/结果
+// 碰撞流形（manifold）：一次碰撞检测在两物体间生成的所有接触点的集合。
+// 最多 8 个接触点，加上法线、切向量等共同描述两物体如何接触。
 struct q3Manifold
 {
 	void SetPair( q3Box *a, q3Box *b );
@@ -98,47 +113,57 @@ struct q3Manifold
 	q3Box *A;
 	q3Box *B;
 
-	q3Vec3 normal;				// From A to B
-	q3Vec3 tangentVectors[ 2 ];	// Tangent vectors
-	q3Contact contacts[ 8 ];
-	i32 contactCount;
+	q3Vec3 normal;				// 接触法线（方向从 A 指向 B）
+	q3Vec3 tangentVectors[ 2 ];	// 两个正交的切向量（与法线垂直，用于摩擦）
+	q3Contact contacts[ 8 ];    // 接触点数组
+	i32 contactCount;           // 实际接触点数量
 
-	q3Manifold* next;
-	q3Manifold* prev;
+	q3Manifold* next;           // 流形链表：下一个
+	q3Manifold* prev;           // 流形链表：上一个
 
-	bool sensor;
+	bool sensor;                // 是否为传感器（只检测、不产生物理响应）
 };
 
+// 接触边：把一个刚体与「某个接触约束」关联起来。
+// 每个刚体维护一条接触边链表（q3Body::m_contactList），
+// 每条边指向另一端刚体和所属的接触约束。
 struct q3ContactEdge
 {
-	q3Body *other;
-	q3ContactConstraint *constraint;
-	q3ContactEdge* next;
-	q3ContactEdge* prev;
+	q3Body *other;              // 接触的另一端刚体
+	q3ContactConstraint *constraint;    // 所属的接触约束
+	q3ContactEdge* next;        // 链表：下一个
+	q3ContactEdge* prev;        // 链表：上一个
 };
 
+//==============================================================================
+// q3ContactConstraint：一个接触约束，表示「两个形状之间的接触关系」。
+// 它同时挂在两条链表上：
+//   1. 全局接触链表（q3ContactManager 维护）；
+//   2. 两个刚体各自的接触边链表（通过 edgeA / edgeB 连接）。
+// 内部包含一个流形（manifold），并记录摩擦/恢复系数、碰撞状态标志等。
+//==============================================================================
 struct q3ContactConstraint
 {
 	void SolveCollision( void );
 
-	q3Box *A, *B;
-	q3Body *bodyA, *bodyB;
+	q3Box *A, *B;               // 两个碰撞形状
+	q3Body *bodyA, *bodyB;      // 两个碰撞刚体
 
-	q3ContactEdge edgeA;
-	q3ContactEdge edgeB;
-	q3ContactConstraint* next;
-	q3ContactConstraint* prev;
+	q3ContactEdge edgeA;        // A 侧的接触边
+	q3ContactEdge edgeB;        // B 侧的接触边
+	q3ContactConstraint* next;  // 全局接触链表：下一个
+	q3ContactConstraint* prev;  // 全局接触链表：上一个
 
-	r32 friction;
-	r32 restitution;
+	r32 friction;               // 混合后的摩擦系数
+	r32 restitution;            // 混合后的恢复（弹性）系数
 
-	q3Manifold manifold;
+	q3Manifold manifold;        // 接触流形
 
 	enum
 	{
-		eColliding    = 0x00000001, // Set when contact collides during a step
-		eWasColliding = 0x00000002, // Set when two objects stop colliding
-		eIsland       = 0x00000004, // For internal marking during island forming
+		eColliding    = 0x00000001, // 本帧正在碰撞（接触求解时置位）
+		eWasColliding = 0x00000002, // 上一帧在碰撞（用于检测「开始/结束碰撞」事件）
+		eIsland       = 0x00000004, // 岛屿划分时的内部标记
 	};
 
 	i32 m_flags;

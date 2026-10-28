@@ -32,6 +32,7 @@
 //--------------------------------------------------------------------------------------------------
 // q3BroadPhase
 //--------------------------------------------------------------------------------------------------
+// 构造：分配候选对缓冲和移动缓冲（初始容量 64），并记录接触管理器。
 q3BroadPhase::q3BroadPhase( q3ContactManager *manager )
 {
 	m_manager = manager;
@@ -53,6 +54,8 @@ q3BroadPhase::~q3BroadPhase( )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 插入形状：把它插入动态 AABB 树，记录树索引到形状上，
+// 并标记为「已移动」以便本帧查询。
 void q3BroadPhase::InsertBox( q3Box *box, const q3AABB& aabb )
 {
 	i32 id = m_tree.Insert( aabb, box );
@@ -61,12 +64,14 @@ void q3BroadPhase::InsertBox( q3Box *box, const q3AABB& aabb )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 移除形状：从树中删除对应节点。
 void q3BroadPhase::RemoveBox( const q3Box *box )
 {
 	m_tree.Remove( box->broadPhaseIndex );
 }
 
 //--------------------------------------------------------------------------------------------------
+// 候选对的排序谓词：先按 A 升序，再按 B 升序。排序后相同的对会相邻，便于去重。
 inline bool ContactPairSort( const q3ContactPair& lhs, const q3ContactPair& rhs )
 {
 	if ( lhs.A < rhs.A )
@@ -79,11 +84,14 @@ inline bool ContactPairSort( const q3ContactPair& lhs, const q3ContactPair& rhs 
 }
 
 //--------------------------------------------------------------------------------------------------
+// 宽相位更新：重新找出所有可能相交的形状对。
+// 优化：只对「本帧移动过的」形状查询树（静态形状之间无需重复查询）。
 void q3BroadPhase::UpdatePairs( )
 {
 	m_pairCount = 0;
 
 	// Query the tree with all moving boxs
+	// 用每个移动过的形状的包围盒去查询树，收集所有与之重叠的候选对
 	for ( i32 i = 0; i < m_moveCount; ++i)
 	{
 		m_currentIndex = m_moveBuffer[ i ];
@@ -97,17 +105,21 @@ void q3BroadPhase::UpdatePairs( )
 	}
 
 	// Reset the move buffer
+	// 清空移动缓冲（下一帧重新累积）
 	m_moveCount = 0;
 
 	// Sort pairs to expose duplicates
+	// 排序候选对，使重复的对相邻，便于去重
 	std::sort( m_pairBuffer, m_pairBuffer + m_pairCount, ContactPairSort );
 
 	// Queue manifolds for solving
+	// 遍历去重后的候选对，交给接触管理器建立接触
 	{
 		i32 i = 0;
 		while ( i < m_pairCount )
 		{
 			// Add contact to manager
+			// 取出该对对应的形状，建立接触约束
 			q3ContactPair* pair = m_pairBuffer + i;
 			q3Box *A = (q3Box*)m_tree.GetUserData( pair->A );
 			q3Box *B = (q3Box*)m_tree.GetUserData( pair->B );
@@ -116,6 +128,7 @@ void q3BroadPhase::UpdatePairs( )
 			++i;
 
 			// Skip duplicate pairs by iterating i until we find a unique pair
+			// 跳过所有重复的候选对（排序后相同的对连续出现）
 			while ( i < m_pairCount )
 			{
 				q3ContactPair* potentialDup = m_pairBuffer + i;
@@ -132,6 +145,7 @@ void q3BroadPhase::UpdatePairs( )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 更新形状的包围盒：若新 AABB 不再被旧的（膨胀）AABB 包含，才真正更新树并标记移动。
 void q3BroadPhase::Update( i32 id, const q3AABB& aabb )
 {
 	if ( m_tree.Update( id, aabb ) )
@@ -139,12 +153,14 @@ void q3BroadPhase::Update( i32 id, const q3AABB& aabb )
 }
 
 //--------------------------------------------------------------------------------------------------
+// 判断两个形状的（膨胀）包围盒是否重叠。
 bool q3BroadPhase::TestOverlap( i32 A, i32 B ) const
 {
 	return q3AABBtoAABB( m_tree.GetFatAABB( A ), m_tree.GetFatAABB( B ) );
 }
 
 //--------------------------------------------------------------------------------------------------
+// 把形状索引加入移动缓冲（满则翻倍扩容）。
 void q3BroadPhase::BufferMove( i32 id )
 {
 	if ( m_moveCount == m_moveCapacity )
